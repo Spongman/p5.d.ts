@@ -8,6 +8,8 @@ const fs = require('fs');
 var emit;
 var yuidocs;
 
+var constants = {};
+
 // http://stackoverflow.com/a/2008353/2422398
 var JS_SYMBOL_RE = /^[$A-Z_][0-9A-Z_$]*$/i;
 
@@ -24,6 +26,11 @@ var P5_ALIASES = [
 var EXTERNAL_TYPES = [
 	'HTMLCanvasElement',
 	'Float32Array',
+	'AudioParam',
+	'AudioNode',
+	'GainNode',
+	'DelayNode',
+	'ConvolverNode',
 	'Event'
 ];
 
@@ -60,7 +67,7 @@ function getClassitems(className) {
 
 function isValidP5ClassName(className) {
 	return P5_CLASS_RE.test(className) && className in yuidocs.classes ||
-		P5_CLASS_RE.test("p5." + className) && ("p5." +className) in yuidocs.classes;
+		P5_CLASS_RE.test("p5." + className) && ("p5." + className) in yuidocs.classes;
 }
 
 /**
@@ -107,13 +114,48 @@ function validateMethod(classitem, overload) {
 			errors.push('param "' + param.name + '" has invalid type: ' +
 				param.type);
 		}
+
+		if (param.type === 'Constant') {
+
+			var myRe = /either\s+(?:[A-Z0-9_]+\s*,?\s*(?:or)?\s*)+/g;
+			var myArray = myRe.exec(param.description);
+			if (classitem.name === 'endShape' && param.name === 'mode')
+				myArray = ['CLOSE'];
+			if (myArray) {
+				var match = myArray[0];
+
+				var values = [];
+
+				var reConst = /[A-Z0-9_]+/g;
+				var matchConst;
+				while ((matchConst = reConst.exec(myArray[0])) !== null) {
+					values.push(matchConst);
+				}
+				var paramWords = param.name.split('.').pop().replace(/([A-Z])/g, ' $1').trim().toLowerCase().split(' ');
+				var propWords = classitem.name.split('.').pop().replace(/([A-Z])/g, ' $1').trim().toLowerCase().split(' ');
+
+				var constName;
+				if (paramWords.length > 1 || propWords[0] === "create") {
+					constName = paramWords.join('_');
+				} else if (propWords[propWords.length - 1] === paramWords[paramWords.length - 1]) {
+					constName = propWords.join('_');
+				} else {
+					constName = (propWords[0] + '_' + paramWords[paramWords.length - 1]);
+				}
+
+				constName = constName.toUpperCase();
+				constants[constName] = values;
+
+				param.type = constName;
+			}
+		}
 	});
 
-	if (overload.return && !validateType(overload.return.type)) {
-		errors.push('return has invalid type: ' + overload.return.type);
-	}
+if (overload.return && !validateType(overload.return.type)) {
+	errors.push('return has invalid type: ' + overload.return.type);
+}
 
-	return errors;
+return errors;
 }
 
 
@@ -137,10 +179,9 @@ function translateType(type, defaultType) {
 	type = type.trim();
 
 	var matchFunction = type.match(/Function\(([^)]*)\)/i);
-	if (matchFunction)
-	{
+	if (matchFunction) {
 		var paramTypes = matchFunction[1].split(',');
-		return "(" + paramTypes.map((t, i) => "p" + (i+1) + ":" + translateType(t, "any")).join(",") + ") => any";
+		return "(" + paramTypes.map((t, i) => "p" + (i + 1) + ":" + translateType(t, "any")).join(",") + ") => any";
 	}
 
 	if (type.charAt(0) === "{")
@@ -149,7 +190,7 @@ function translateType(type, defaultType) {
 	var parts = type.split('|');
 	if (parts.length > 1)
 		return parts.map(t => translateType(t, defaultType)).join('|');
-	
+
 	if (type in YUIDOC_TO_TYPESCRIPT_PARAM_MAP)
 		return YUIDOC_TO_TYPESCRIPT_PARAM_MAP[type];
 
@@ -157,6 +198,9 @@ function translateType(type, defaultType) {
 		return type;
 
 	if (isValidP5ClassName(type))
+		return type;
+
+	if (constants[type])
 		return type;
 
 	missingTypes[type] = true;
@@ -183,7 +227,7 @@ function generateClassMethodWithParams(className, classitem, overload) {
 	var params = (overload.params || []).map(translateParam);
 	var returnType = overload.chainable ? className
 		: overload.return ? translateType(overload.return.type, "any")
-		: 'void';
+			: 'void';
 	var decl;
 
 	if (classitem.is_constructor) {
@@ -231,15 +275,35 @@ function generateClassProperty(className, classitem) {
 		// TODO: It seems our properties don't carry any type information,
 		// which is unfortunate. YUIDocs supports the @type tag on properties,
 		// and even encourages using it, but we don't seem to use it.
-		decl = classitem.name + ': ' + translateType(classitem.type, "any");
+		var translatedType = translateType(classitem.type, "any");
+		var defaultValue = classitem.default;
+		if (classitem.final && translatedType === "string" && !defaultValue) {
+			defaultValue = classitem.name.toLowerCase().replace(/_/g, '-');
+		}
+
+		var decl;
+		if (defaultValue)
+		{
+			decl = classitem.name + ": ";
+			if (translatedType === "string")
+				decl += "'" + defaultValue.replace(/'/g, "\\'") + "'";
+			else
+				decl += defaultValue;
+		} else {
+			decl = classitem.name + ': ' + translatedType;
+		}
+		
 
 		emit.description(classitem.description);
 
 		if (emit.getIndentLevel() === 0) {
-			emit('declare var ' + decl + ';');
+			emit('declare ' + (classitem.final ? 'const ' : 'var ') + decl + ';');
 		} else {
+			if (classitem.final)
+				return;
 			emit(decl);
 		}
+
 	} else {
 		emit.sectionBreak();
 		emit('// TODO: Property "' + classitem.name +
@@ -331,6 +395,30 @@ function generate() {
 
 	p5Aliases.forEach(generateP5Properties);
 
+	emit('// Constants ');
+	Object.keys(constants).forEach(function (key) {
+		var values = constants[key];
+
+		/*
+		emit('// ' + key);
+		values.forEach(function (v) {
+			emit('declare const ' + v + ': string;');
+		});
+		*/
+
+		emit('type ' + key + ' =');
+		values.forEach(function (v, i) {
+			var str = ' typeof ' + v;
+			str = (i ? '|' : ' ') + str;
+			if (i === values.length - 1)
+				str += ';'
+			emit('    ' + str);
+		});
+
+		emit('');
+		
+	});
+
 	emit.close();
 }
 
@@ -345,8 +433,7 @@ if (!module.parent) {
 		yuidocs = JSON.parse(data);
 		generate();
 
-		for (var t in missingTypes)
-		{
+		for (var t in missingTypes) {
 			console.log("MISSING:", t);
 		}
 
