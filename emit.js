@@ -1,9 +1,12 @@
 var fs = require('fs');
 var h2p = require('html2plaintext')
+var wrap = require('word-wrap');
 
 function shortenDescription(desc) {
 
-	return h2p(desc);
+	return wrap(h2p(desc), {
+		width: 50,
+	});
 
 	/*
 	var match = desc.match(/^((.|\n)+?\.)\s/);

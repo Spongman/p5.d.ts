@@ -4,6 +4,7 @@
   "description": "",
   "main": "emit.js",
   "scripts": {
+    "build": "node ./generate-typescript-annotations.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
@@ -12,5 +13,7 @@
     "html2plaintext": "^1.1.1",
     "request": "^2.81.0"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "word-wrap": "^1.2.3"
+  }
 }
