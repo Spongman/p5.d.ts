@@ -59,6 +59,8 @@ function createEmitter(filename) {
 		}
 	};
 
+	emit.getCurrentSourceFile = function () { return currentSourceFile; };
+
 	emit.sectionBreak = function () {
 		if (lastText !== '' && !/\{$/.test(lastText)) {
 			emit('');

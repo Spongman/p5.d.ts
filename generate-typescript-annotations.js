@@ -7,6 +7,8 @@ const fs = require('fs');
 
 var emit;
 var yuidocs;
+var _rootDir;
+var _outputDir;
 
 var constants = {};
 
@@ -70,13 +72,6 @@ function isValidP5ClassName(className) {
 		P5_CLASS_RE.test("p5." + className) && ("p5." + className) in yuidocs.classes;
 }
 
-/**
- * @param {string} type
- */
-function validateType(type) {
-	return translateType(type);
-}
-
 function validateMethod(classitem, overload) {
 	var errors = [];
 	var paramNames = {};
@@ -110,7 +105,7 @@ function validateMethod(classitem, overload) {
 				'" is not a valid JS symbol name');
 		}
 
-		if (!validateType(param.type)) {
+		if (!translateType(param.type)) {
 			errors.push('param "' + param.name + '" has invalid type: ' +
 				param.type);
 		}
@@ -151,11 +146,11 @@ function validateMethod(classitem, overload) {
 		}
 	});
 
-if (overload.return && !validateType(overload.return.type)) {
-	errors.push('return has invalid type: ' + overload.return.type);
-}
+	if (overload.return && !translateType(overload.return.type)) {
+		errors.push('return has invalid type: ' + overload.return.type);
+	}
 
-return errors;
+	return errors;
 }
 
 
@@ -203,7 +198,7 @@ function translateType(type, defaultType) {
 	if (constants[type])
 		return type;
 
-	missingTypes[type] = true;
+	missingTypes[type] = emit.getCurrentSourceFile();;
 	return defaultType;
 }
 
@@ -247,7 +242,7 @@ function generateClassMethodWithParams(className, classitem, overload) {
 			classitem.file + ', line ' + overload.line + ':');
 		emit('//');
 		errors.forEach(function (error) {
-			console.log("e:/play/p5.js/" + classitem.file + ":" + overload.line + ", " + error);
+			console.error(_rootDir + "/" + classitem.file + ":" + overload.line + ", " + error);
 			emit('//   ' + error);
 		});
 		emit('//');
@@ -282,8 +277,7 @@ function generateClassProperty(className, classitem) {
 		}
 
 		var decl;
-		if (defaultValue)
-		{
+		if (defaultValue) {
 			decl = classitem.name + ": ";
 			if (translatedType === "string")
 				decl += "'" + defaultValue.replace(/'/g, "\\'") + "'";
@@ -292,7 +286,7 @@ function generateClassProperty(className, classitem) {
 		} else {
 			decl = classitem.name + ': ' + translatedType;
 		}
-		
+
 
 		emit.description(classitem.description);
 
@@ -315,7 +309,7 @@ function generateClassProperty(className, classitem) {
 
 function generateClassProperties(className) {
 	getClassitems(className).forEach(function (classitem) {
-		classitem.file = classitem.file.replace(/\\/g, '/');
+		//classitem.file = classitem.file.replace(/\\/g, '/');
 		emit.setCurrentSourceFile(classitem.file);
 		if (classitem.itemtype === 'method') {
 			generateClassMethod(className, classitem);
@@ -340,7 +334,8 @@ function generateP5Subclass(className) {
 	var info = yuidocs.classes[className];
 	var nestedClassName = className.match(P5_CLASS_RE)[1];
 
-	emit.setCurrentSourceFile(info.file.replace(/\\/g, '/'));
+	var file = info.file;//.replace(/\\/g, '/');
+	emit.setCurrentSourceFile(file);
 
 	emit('class ' + nestedClassName +
 		(info.extends ? ' extends ' + info.extends : '') + ' {');
@@ -353,7 +348,7 @@ function generateP5Subclass(className) {
 	emit('}');
 }
 
-function generate() {
+function generate(outputDir) {
 	var p5Aliases = [];
 	var p5Subclasses = [];
 
@@ -369,7 +364,7 @@ function generate() {
 		}
 	});
 
-	emit = createEmitter(__dirname + '/p5.d.ts');
+	emit = createEmitter(outputDir + '/p5.d.ts');
 
 	emit('declare class p5 {');
 	emit.indent();
@@ -389,7 +384,7 @@ function generate() {
 
 	emit.close();
 
-	emit = createEmitter(__dirname + '/p5.global-mode.d.ts');
+	emit = createEmitter(outputDir + '/p5.global-mode.d.ts');
 
 	emit('///<reference path="p5.d.ts" />\n');
 
@@ -416,27 +411,33 @@ function generate() {
 		});
 
 		emit('');
-		
+
 	});
 
 	emit.close();
+}
+
+function doit(jsonPath, rootDir, outputDir) {
+
+	_rootDir = rootDir.replace(/[\/\\]*$/, '');
+	_outputDir = outputDir;
+
+	fs.readFile(jsonPath, "utf8", (err, data) => {
+
+		yuidocs = JSON.parse(data);
+		generate(outputDir);
+
+		for (var t in missingTypes) {
+			console.error(_rootDir + "/" + missingTypes[t] + ": missing type: ", t);
+		}
+	});
 }
 
 module.exports = generate;
 
 if (!module.parent) {
 
-	var url = "../p5.js/docs/reference/data.json";
-	//var url = 'https://p5js.org/reference/data.json';
-	fs.readFile(url, (err, data) => {
-
-		yuidocs = JSON.parse(data);
-		generate();
-
-		for (var t in missingTypes) {
-			console.log("MISSING:", t);
-		}
-
-	});
+	var args = Array.prototype.slice.call(process.argv, 2);
+	doit.apply(null, args);
 
 }
